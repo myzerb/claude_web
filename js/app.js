@@ -198,25 +198,30 @@
     const card = document.createElement("div");
     card.className = "filecard";
 
-    const ext = document.createElement("div");
-    ext.className = "ext";
-    ext.textContent = "MD";
+    const icon = document.createElement("div");
+    icon.className = "ficon";
+    icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';
 
     const meta = document.createElement("div");
     meta.className = "meta";
+    meta.title = "Click to show/hide the text";
     const nm = document.createElement("b");
-    nm.textContent = name;
+    nm.textContent = name.replace(/\.md$/, "");
     const sz = document.createElement("span");
-    sz.textContent = "Long reply \u00b7 " + Math.max(1, Math.round(m.text.length / 1024)) + " KB";
+    sz.textContent = "MD \u00b7 " + Math.max(1, Math.round(m.text.length / 1024)) + " KB";
     meta.appendChild(nm);
     meta.appendChild(sz);
+
+    // Long replies are shown as a file; click the title to read the text inline
+    a.body.hidden = true;
+    meta.addEventListener("click", () => { a.body.hidden = !a.body.hidden; });
 
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = "Download";
     btn.addEventListener("click", () => downloadText(name, m.text));
 
-    card.appendChild(ext);
+    card.appendChild(icon);
     card.appendChild(meta);
     card.appendChild(btn);
     a.wrap.insertBefore(card, a.foot);

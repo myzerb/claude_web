@@ -3,6 +3,11 @@ const FileHandler = {
     const name = file.name.toLowerCase();
     const mime = file.type || "";
 
+    // Dotenv files: ".env", ".env.local", ".env.production", "prod.env", ...
+    if (/(^|\.)env(\.[\w-]+)?$/.test(name) && !/\.(png|jpe?g|gif|webp|pdf)$/.test(name)) {
+      return { type: "text", config: CONFIG.FILE_TYPES.text };
+    }
+
     for (const [type, config] of Object.entries(CONFIG.FILE_TYPES)) {
       const matchExt = config.extensions.some(ext => name.endsWith(ext));
       const matchMime = config.mimes.some(m => mime.startsWith(m) || mime === m);
@@ -90,6 +95,7 @@ const FileHandler = {
 
   getFileExtLabel(fileName) {
     const match = /\.([a-z0-9]+)$/i.exec(fileName);
+    if (/^\.env/i.test(fileName)) return "ENV";
     return match ? match[1].slice(0, 4).toUpperCase() : "FILE";
   }
 };

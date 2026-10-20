@@ -162,10 +162,11 @@ textarea.input { resize: vertical; min-height: 80px; font-family: var(--font); }
   .side { transition: none; }
   .cursor::after { animation: none; }
 }
-.filecard { display: flex; align-items: center; gap: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; max-width: 420px; }
-.filecard .ext { width: 38px; height: 38px; border-radius: 7px; background: var(--bubble); border: 1px solid var(--line); display: grid; place-items: center; font: 600 11px var(--font-mono); color: var(--accent); flex: none; }
-.filecard .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.filecard .meta b { font-size: 13px; color: var(--ink-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.filecard .meta span { font-size: 12px; color: var(--muted); }
-.filecard button { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px; cursor: pointer; color: var(--ink-strong); font-size: 13px; }
+.filecard { display: flex; align-items: center; gap: 16px; background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 12px 16px 12px 12px; max-width: 560px; }
+.filecard .ficon { width: 56px; height: 56px; border-radius: 12px; background: var(--bubble); border: 1px solid var(--line); display: grid; place-items: center; color: var(--muted); flex: none; }
+.filecard .ficon svg { width: 24px; height: 24px; }
+.filecard .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+.filecard .meta b { font-size: 16px; font-weight: 500; color: var(--ink-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.filecard .meta span { font-size: 13px; font-weight: 600; letter-spacing: .5px; color: var(--muted); }
+.filecard button { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 8px 16px; cursor: pointer; color: var(--ink-strong); font-size: 14px; flex: none; }
 .filecard button:hover { border-color: var(--muted); }

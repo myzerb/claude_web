@@ -39,7 +39,8 @@ const CONFIG = {
     text: {
       extensions: [".txt", ".md", ".csv", ".json", ".js", ".ts", ".py", ".html", ".css", 
                    ".xml", ".yml", ".yaml", ".log", ".sql", ".sh", ".java", ".c", ".cpp", 
-                   ".go", ".rs", ".rb", ".php", ".tsx", ".jsx", ".vue", ".swift", ".kt"],
+                   ".go", ".rs", ".rb", ".php", ".tsx", ".jsx", ".vue", ".swift", ".kt",
+                   ".env", ".properties", ".gitignore", ".dockerignore", ".tsv"],
       mimes: ["text/plain", "text/markdown", "text/csv", "application/json", 
               "text/html", "text/css", "text/javascript", "application/javascript"],
       maxSize: 400 * 1024, // 400KB
