@@ -60,6 +60,18 @@ const CONFIG = {
     }
   },
 
+  // Merge several text files attached at once into a single attachment
+  MERGE_TEXT_FILES: true,
+
+  // .zip support: unpacked in the browser, all readable text files merged into one attachment
+  ARCHIVE: {
+    maxZipSize: 25 * 1024 * 1024,   // size of the .zip itself
+    maxEntries: 2000,               // files inside the zip
+    maxEntryBytes: 400 * 1024,      // per file inside the zip
+    maxMergedChars: 600000,         // total size of the merged text
+    ignore: ["__macosx", ".git", "node_modules", "__pycache__", ".venv", "venv", ".ds_store", "thumbs.db"]
+  },
+
   ICONS: {
     send: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 16V4M5 9l5-5 5 5"/></svg>',
     stop: '<svg viewBox="0 0 20 20" fill="currentColor"><rect x="5" y="5" width="10" height="10" rx="2"/></svg>'

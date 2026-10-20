@@ -180,8 +180,8 @@
     return base + ".md";
   }
 
-  function downloadText(name, text) {
-    const url = URL.createObjectURL(new Blob([text], { type: "text/markdown;charset=utf-8" }));
+  function downloadBlob(name, blob) {
+    const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
     link.download = name;
@@ -191,7 +191,77 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  function downloadText(name, text) {
+    downloadBlob(name, new Blob([text], { type: "text/markdown;charset=utf-8" }));
+  }
+
+  const FILE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>';
+
+  function sizeLabel(len) {
+    return len < 1024 ? len + " B" : Math.max(1, Math.round(len / 1024)) + " KB";
+  }
+
+  function makeCard(title, sub, btnText, onClick) {
+    const card = document.createElement("div");
+    card.className = "filecard";
+
+    const icon = document.createElement("div");
+    icon.className = "ficon";
+    icon.innerHTML = FILE_ICON;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.style.cursor = "default";
+    const nm = document.createElement("b");
+    nm.textContent = title;
+    nm.title = title;
+    const sz = document.createElement("span");
+    sz.textContent = sub;
+    meta.appendChild(nm);
+    meta.appendChild(sz);
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = btnText;
+    btn.addEventListener("click", onClick);
+
+    card.appendChild(icon);
+    card.appendChild(meta);
+    card.appendChild(btn);
+    return card;
+  }
+
+  // Code blocks that have a file name (bot.py, .env, Dockerfile ...) are offered as real files
+  function addReplyFiles(a, m) {
+    const files = FileHandler.extractReplyFiles(m.text);
+    if (!files.length) return false;
+    if (a.wrap.querySelector(".filecard")) return true;
+
+    const cards = document.createElement("div");
+    cards.className = "filecards";
+    cards.style.cssText = "display:flex;flex-direction:column;gap:8px;margin-top:10px";
+
+    files.forEach(f => {
+      const base = f.name.split("/").pop();
+      const ext = /\.([A-Za-z0-9]+)$/.exec(base);
+      const sub = (ext && !/^\./.test(base) ? ext[1].toUpperCase() : "FILE") + " \u00b7 " + sizeLabel(f.content.length);
+      cards.appendChild(makeCard(f.name, sub, "Download", () => {
+        downloadBlob(base, new Blob([f.content], { type: "text/plain;charset=utf-8" }));
+      }));
+    });
+
+    if (files.length > 1) {
+      cards.appendChild(makeCard(files.length + " files", "ZIP \u00b7 keeps names and folders", "Download all", () => {
+        downloadBlob("files.zip", FileHandler.makeZip(files));
+      }));
+    }
+
+    a.wrap.insertBefore(cards, a.foot);
+    return true;
+  }
+
   function addFileCard(a, m, chat) {
+    if (addReplyFiles(a, m)) return;
     if (!m.text || m.text.length < LONG_REPLY || a.wrap.querySelector(".filecard")) return;
     const name = fileName(chat);
 
