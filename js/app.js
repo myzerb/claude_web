@@ -781,8 +781,14 @@
     el.main.addEventListener("drop", e => {
       e.preventDefault();
       el.main.classList.remove("drag");
-      if (e.dataTransfer && e.dataTransfer.files.length) {
-        addFiles(e.dataTransfer.files);
+      const dt = e.dataTransfer;
+      if (!dt) return;
+      const items = dt.items ? Array.prototype.slice.call(dt.items) : [];
+      const entries = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+      if (entries.some(en => en.isDirectory)) {
+        FileHandler.collectEntries(entries).then(fs => { if (fs.length) addFiles(fs); else UI.showError("Thư mục trống hoặc không đọc được"); });
+      } else if (dt.files.length) {
+        addFiles(dt.files);
       }
     });
   }

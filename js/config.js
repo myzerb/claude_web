@@ -26,9 +26,9 @@ const CONFIG = {
 
   FILE_TYPES: {
     image: {
-      extensions: [".png", ".jpg", ".jpeg", ".gif", ".webp"],
-      mimes: ["image/png", "image/jpeg", "image/gif", "image/webp"],
-      maxSize: 8 * 1024 * 1024, // 8MB
+      extensions: [".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".ico", ".tif", ".tiff", ".heic", ".heif", ".jfif"],
+      mimes: ["image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif", "image/x-icon", "image/vnd.microsoft.icon", "image/tiff", "image/heic", "image/heif"],
+      maxSize: 60 * 1024 * 1024, // ảnh lớn sẽ được thu nhỏ
       label: "img"
     },
     pdf: {
@@ -42,10 +42,13 @@ const CONFIG = {
       extensions: [".txt", ".md", ".csv", ".json", ".js", ".ts", ".py", ".html", ".css", 
                    ".xml", ".yml", ".yaml", ".log", ".sql", ".sh", ".java", ".c", ".cpp", 
                    ".go", ".rs", ".rb", ".php", ".tsx", ".jsx", ".vue", ".swift", ".kt",
-                   ".env", ".properties", ".gitignore", ".dockerignore", ".tsv"],
+                   ".env", ".properties", ".gitignore", ".dockerignore", ".tsv", ".svg", ".ipynb", ".tex", ".bib",
+                   ".scss", ".sass", ".less", ".lua", ".r", ".pl", ".dart", ".scala", ".cs", ".h", ".hpp",
+                   ".gradle", ".tf", ".proto", ".graphql", ".ini", ".conf", ".cfg", ".toml", ".bat", ".ps1",
+                   ".vb", ".asm", ".srt", ".vtt", ".rst", ".adoc", ".org", ".diff", ".patch", ".lock", ".mjs", ".cjs"],
       mimes: ["text/plain", "text/markdown", "text/csv", "application/json", 
               "text/html", "text/css", "text/javascript", "application/javascript"],
-      maxSize: 400 * 1024, // 400KB
+      maxSize: Infinity, // cắt ở MAX_TEXT_BYTES thay vì từ chối
       label: "txt"
     },
     blueprint: {
@@ -62,12 +65,20 @@ const CONFIG = {
     }
   },
 
+  // File text quá lớn không bị từ chối: chỉ đọc phần đầu (byte) và ghi chú đã cắt
+  MAX_TEXT_BYTES: 800 * 1024,
+  // Ảnh: tự đổi định dạng lạ (bmp, avif, ico...) và thu nhỏ khi quá lớn
+  IMAGE: { passMax: 4 * 1024 * 1024, maxDim: 2000, quality: 0.86 },
+  PDF_JS: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",
+  PDF_WORKER: "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js",
+
   // Merge several text files attached at once into a single attachment
   MERGE_TEXT_FILES: true,
 
   // .zip support: unpacked in the browser, all readable text files merged into one attachment
   ARCHIVE: {
-    maxZipSize: 25 * 1024 * 1024,   // size of the .zip itself
+    maxZipSize: 60 * 1024 * 1024,   // size of the .zip itself
+    maxUnpacked: 150 * 1024 * 1024, // tổng dung lượng khi giải nén .gz/.tgz
     maxEntries: 2000,               // files inside the zip
     maxEntryBytes: 400 * 1024,      // per file inside the zip
     maxMergedChars: 600000,         // total size of the merged text

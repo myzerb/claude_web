@@ -79,6 +79,9 @@ const FileHandler = {
 
         if (type === "text" || type === "blueprint" || type === "code") {
           fileData.content = reader.result;
+          if (file.size > CONFIG.MAX_TEXT_BYTES) {
+            fileData.content += "\n\n[... Cắt bớt: file " + (file.size / 1048576).toFixed(1) + " MB, chỉ đọc " + Math.round(CONFIG.MAX_TEXT_BYTES / 1024) + " KB đầu ...]";
+          }
         } else {
           fileData.data = reader.result;
         }
@@ -89,7 +92,7 @@ const FileHandler = {
       reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
 
       if (type === "text" || type === "blueprint" || type === "code") {
-        reader.readAsText(file);
+        reader.readAsText(file.size > CONFIG.MAX_TEXT_BYTES ? file.slice(0, CONFIG.MAX_TEXT_BYTES) : file);
       } else {
         reader.readAsDataURL(file);
       }
@@ -131,8 +134,8 @@ const FileHandler = {
     }
   },
 
-  async inflateRaw(bytes, limit) {
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  async inflateRaw(bytes, limit, fmt) {
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream(fmt || "deflate-raw"));
     const reader = stream.getReader();
     const chunks = [];
     let total = 0;
@@ -312,10 +315,215 @@ const FileHandler = {
   },
 
   async sniff(file) {
-    const t = file.size <= 400 * 1024 ? await file.text() : null;
-    if (t != null && !this.looksBinary(t)) return { name: file.name, kind: "text", mime: file.type || "text/plain", content: t };
+    const cut = file.size > CONFIG.MAX_TEXT_BYTES;
+    const t = await (cut ? file.slice(0, CONFIG.MAX_TEXT_BYTES) : file).text();
+    if (!this.looksBinary(t)) return { name: file.name, kind: "text", mime: file.type || "text/plain",
+      content: t + (cut ? "\n\n[... Cắt bớt: chỉ đọc " + Math.round(CONFIG.MAX_TEXT_BYTES / 1024) + " KB đầu ...]" : "") };
     return { name: file.name, kind: "text", mime: "text/plain",
       content: "[Binary file: " + file.name + ", " + (file.type || "unknown type") + ", " + file.size + " bytes. Contents cannot be read as text, only the file info is shared.]" };
+  },
+
+  // ---------- Ảnh: đổi định dạng lạ / thu nhỏ ----------
+  async processImage(file) {
+    const I = CONFIG.IMAGE;
+    const ok = /^image\/(png|jpeg|gif|webp)$/.test(file.type) && file.size <= I.passMax;
+    const toUrl = blob => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(new Error("không đọc được ảnh")); r.readAsDataURL(blob); });
+    if (ok) return { name: file.name, kind: "image", mime: file.type, data: await toUrl(file) };
+
+    let bmp;
+    try { bmp = await createImageBitmap(file); }
+    catch (e) { throw new Error("trình duyệt không mở được định dạng ảnh này"); }
+    let dim = I.maxDim;
+    let asPng = /png|gif|webp|ico|avif/.test(file.type + file.name.toLowerCase());
+    let out = null;
+    for (let tries = 0; tries < 6; tries++) {
+      const k = Math.min(1, dim / Math.max(bmp.width, bmp.height));
+      const cv = document.createElement("canvas");
+      cv.width = Math.max(1, Math.round(bmp.width * k)); cv.height = Math.max(1, Math.round(bmp.height * k));
+      const ctx = cv.getContext("2d");
+      if (!asPng) { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height); }
+      ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+      const blob = await new Promise(r => cv.toBlob(r, asPng ? "image/png" : "image/jpeg", I.quality));
+      if (!blob) throw new Error("không chuyển được ảnh");
+      out = { blob, png: asPng };
+      if (blob.size <= I.passMax) break;
+      if (asPng) asPng = false; else dim = Math.round(dim * 0.7); // PNG quá nặng: chuyển JPEG, rồi giảm kích thước
+    }
+    if (out.blob.size > 5 * 1024 * 1024) throw new Error("ảnh quá lớn, không thu nhỏ đủ");
+    return { name: file.name.replace(/\.[^.]+$/, "") + (out.png ? ".png" : ".jpg"), kind: "image", mime: out.blob.type, data: await toUrl(out.blob) };
+  },
+
+  // ---------- PDF cho provider không đọc PDF trực tiếp (pdf.js tải khi cần) ----------
+  async loadPdfJs() {
+    if (window.pdfjsLib) return window.pdfjsLib;
+    await new Promise((res, rej) => {
+      const s = document.createElement("script");
+      s.src = CONFIG.PDF_JS; s.onload = res; s.onerror = () => rej(new Error("không tải được bộ đọc PDF (cần internet)"));
+      document.head.appendChild(s);
+    });
+    window.pdfjsLib.GlobalWorkerOptions.workerSrc = CONFIG.PDF_WORKER;
+    return window.pdfjsLib;
+  },
+
+  async readPdfText(file) {
+    if (file.size > 60 * 1024 * 1024) throw new Error("quá 60MB");
+    const lib = await this.loadPdfJs();
+    const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
+    const out = [];
+    const max = Math.min(doc.numPages, 400);
+    let chars = 0;
+    for (let i = 1; i <= max && chars < CONFIG.ARCHIVE.maxMergedChars; i++) {
+      const tc = await (await doc.getPage(i)).getTextContent();
+      const t = tc.items.map(x => x.str + (x.hasEOL ? "\n" : " ")).join("").replace(/[ \t]+\n/g, "\n").trim();
+      chars += t.length;
+      out.push("## Trang " + i + "\n" + t);
+    }
+    if (doc.numPages > max) out.push("[... chỉ đọc " + max + "/" + doc.numPages + " trang ...]");
+    const text = out.join("\n\n");
+    if (text.replace(/## Trang \d+|\s/g, "").length < 20) throw new Error("PDF dạng ảnh scan, không có chữ để đọc");
+    return text;
+  },
+
+  // ---------- OpenDocument, EPUB, RTF, file Office đời cũ ----------
+  xmlText(s) {
+    return s.replace(/<[^>]+>/g, "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+  },
+
+  async readOpenDoc(file) {
+    const zip = await this.readZipDirectory(file);
+    const dec = new TextDecoder();
+    const n = file.name.toLowerCase();
+    const get = async e => { const b = await this.extractEntry(zip, e, 40e6); return b ? dec.decode(b) : ""; };
+
+    if (n.endsWith(".epub")) {
+      const ch = zip.entries.filter(e => /\.(xhtml|html|htm)$/i.test(e.name)).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      const out = [];
+      for (const e of ch) {
+        const x = (await get(e)).replace(/<(script|style)[\s\S]*?<\/\1>/gi, "").replace(/<\/(p|div|h\d|li|br)>|<br\s*\/?>/gi, "\n");
+        const t = this.xmlText(x).replace(/\n{3,}/g, "\n\n").trim();
+        if (t) out.push(t);
+      }
+      return out.join("\n\n---\n\n");
+    }
+    const ce = zip.entries.find(e => e.name === "content.xml");
+    if (!ce) return "";
+    let x = await get(ce);
+    x = x.replace(/<\/text:(p|h)>/g, "\n").replace(/<text:tab\/>/g, "\t").replace(/<text:line-break\/>/g, "\n")
+         .replace(/<\/table:table-cell>/g, "\t").replace(/<\/table:table-row>/g, "\n").replace(/<\/draw:page>/g, "\n\n---\n\n");
+    return this.xmlText(x).replace(/\t+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  },
+
+  async readRtf(file) {
+    let t = await file.text();
+    t = t.replace(/\\'([0-9a-f]{2})/gi, (m, h) => String.fromCharCode(parseInt(h, 16)))
+         .replace(/\\u(-?\d+)\??/g, (m, d) => String.fromCharCode(d < 0 ? +d + 65536 : +d))
+         .replace(/\{\\(?:fonttbl|colortbl|stylesheet|info|\*)(?:[^{}]|\{[^{}]*\})*\}/g, "").replace(/\\(par|line)\b ?/g, "\n").replace(/\\tab\b ?/g, "\t")
+         .replace(/\\[a-z]+-?\d* ?/gi, "").replace(/[{}]/g, "").replace(/\\(.)/g, "$1");
+    return t.replace(/\n{3,}/g, "\n\n").trim();
+  },
+
+  // .doc/.xls/.ppt đời cũ: không có bộ đọc đầy đủ, lấy các đoạn chữ đọc được (tốt nhất có thể)
+  async readLegacyOffice(file) {
+    if (file.size > 30 * 1024 * 1024) throw new Error("quá 30MB");
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const runs = [];
+    const flush = s => { if (s.length >= 6) runs.push(s); };
+    let cur = "";
+    for (let i = 0; i < buf.length; i++) { const c = buf[i]; if ((c >= 32 && c < 127) || c === 9) cur += String.fromCharCode(c); else { flush(cur); cur = ""; } }
+    flush(cur);
+    const u16 = new TextDecoder("utf-16le").decode(buf.subarray(0, buf.length - (buf.length % 2)));
+    (u16.match(/[\p{L}\p{N}\p{P}\p{Zs}]{6,}/gu) || []).forEach(s => runs.push(s.trim()));
+    const text = [...new Set(runs.map(s => s.trim()).filter(s => /[A-Za-zÀ-ỹ]{3}/.test(s)))].join("\n");
+    if (!text) throw new Error("không đọc được nội dung");
+    return "[Định dạng Office đời cũ, chỉ trích được phần chữ, có thể thiếu hoặc lẫn ký tự rác. Nên lưu lại thành .docx/.xlsx/.pptx.]\n\n" + text.slice(0, CONFIG.ARCHIVE.maxMergedChars);
+  },
+
+  // ---------- tar / gz / tgz ----------
+  parseTar(bytes) {
+    const dec = new TextDecoder();
+    const str = (o, n) => dec.decode(bytes.subarray(o, o + n)).replace(/\0.*$/s, "");
+    const entries = [];
+    let p = 0, longName = null;
+    while (p + 512 <= bytes.length) {
+      if (bytes[p] === 0) break;
+      let name = str(p, 100);
+      const size = parseInt(str(p + 124, 12).trim() || "0", 8) || 0;
+      const type = String.fromCharCode(bytes[p + 156] || 48);
+      const prefix = str(p + 345, 155);
+      if (prefix) name = prefix + "/" + name;
+      const start = p + 512;
+      if (type === "L") { longName = str(start, size); }
+      else {
+        if (longName) { name = longName; longName = null; }
+        if (type === "0" || type === "\0") entries.push({ name, size, data: bytes.subarray(start, start + size) });
+      }
+      p = start + Math.ceil(size / 512) * 512;
+    }
+    return entries;
+  },
+
+  async processTarball(file) {
+    const A = CONFIG.ARCHIVE;
+    if (file.size > A.maxZipSize) throw new Error("quá " + Math.round(A.maxZipSize / 1048576) + "MB");
+    if (typeof DecompressionStream === "undefined") throw new Error("trình duyệt chưa hỗ trợ giải nén (hãy cập nhật)");
+    let bytes = new Uint8Array(await file.arrayBuffer());
+    const n = file.name.toLowerCase();
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      bytes = await this.inflateRaw(bytes, A.maxUnpacked, "gzip");
+      if (!bytes) throw new Error("giải nén ra quá lớn");
+    }
+    const isTar = n.endsWith(".tar") || n.endsWith(".tgz") || n.endsWith(".tar.gz") || (bytes.length > 262 && String.fromCharCode(...bytes.subarray(257, 262)) === "ustar");
+    if (!isTar) {
+      const t = this.decodeUtf8(bytes.subarray(0, CONFIG.MAX_TEXT_BYTES));
+      if (t == null) throw new Error("nội dung giải nén không phải chữ");
+      return { file: { name: file.name.replace(/\.gz$/i, ""), kind: "text", mime: "text/plain", content: t }, notes: [] };
+    }
+    let list = this.parseTar(bytes);
+    let strip = 0;
+    if (list.length && list.every(e => e.name.replace(/^\.\//, "").indexOf("/") > 0)) {
+      const root = list[0].name.replace(/^\.\//, "").split("/")[0];
+      if (list.every(e => e.name.replace(/^\.\//, "").split("/")[0] === root)) strip = root.length + 1;
+    }
+    const items = [], skipped = [];
+    let total = 0;
+    for (const e of list) {
+      const full = e.name.replace(/^\.\//, "");
+      const path = full.slice(strip);
+      if (full.toLowerCase().split("/").some(s => A.ignore.indexOf(s) > -1)) continue;
+      if (e.size > A.maxEntryBytes) { skipped.push(path + " (too large)"); continue; }
+      const content = this.decodeUtf8(e.data);
+      if (content == null) { skipped.push(path + " (binary)"); continue; }
+      if (total + content.length > A.maxMergedChars) { skipped.push(path + " (merged size limit)"); continue; }
+      total += content.length; items.push({ path, content });
+    }
+    const notes = [];
+    if (skipped.length) notes.push(`${file.name}: skipped ${skipped.length} file(s): ${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? ", ..." : ""}`);
+    if (!items.length) { notes.push(`${file.name}: no readable text files inside`); return { file: null, notes }; }
+    return { file: { name: file.name.replace(/\.(tar\.gz|tgz|tar|gz)$/i, "") + ".merged.txt", kind: "text", mime: "text/plain", content: this.buildMerged(file.name, items, skipped) }, notes };
+  },
+
+  // ---------- Kéo thả thư mục ----------
+  async collectEntries(entries) {
+    const A = CONFIG.ARCHIVE;
+    const out = [];
+    const readAll = dir => new Promise(res => {
+      const rd = dir.createReader(), all = [];
+      const next = () => rd.readEntries(b => { if (!b.length) res(all); else { all.push(...b); next(); } }, () => res(all));
+      next();
+    });
+    const walk = async (en, path) => {
+      if (out.length >= A.maxEntries) return;
+      const full = path + en.name;
+      if (full.toLowerCase().split("/").some(s => A.ignore.indexOf(s) > -1)) return;
+      if (en.isFile) {
+        const file = await new Promise(r => en.file(r, () => r(null)));
+        if (file) out.push(new File([file], full, { type: file.type }));
+      } else if (en.isDirectory) {
+        for (const c of await readAll(en)) await walk(c, full + "/");
+      }
+    };
+    for (const en of entries) await walk(en, "");
+    return out;
   },
 
   // ---------- Entry point ----------
@@ -333,6 +541,39 @@ const FileHandler = {
         } catch (e) {
           errors.push(`${file.name}: ${e.message}`);
         }
+        continue;
+      }
+
+      if (/\.(tar|tgz|gz)$/i.test(file.name) || /\.tar\.gz$/i.test(file.name)) {
+        try {
+          const z = await this.processTarball(file);
+          if (z.file) results.push(z.file);
+          z.notes.forEach(n => errors.push(n));
+        } catch (e) { errors.push(file.name + ": " + e.message); }
+        continue;
+      }
+
+      if (/\.(odt|ods|odp|epub|rtf|doc|xls|ppt)$/i.test(file.name)) {
+        try {
+          const n = file.name.toLowerCase();
+          const t = /\.rtf$/.test(n) ? await this.readRtf(file)
+                  : /\.(doc|xls|ppt)$/.test(n) ? await this.readLegacyOffice(file)
+                  : await this.readOpenDoc(file);
+          if (t) texts.push({ name: file.name + " (text)", kind: "text", mime: "text/plain", content: t.slice(0, CONFIG.ARCHIVE.maxMergedChars) });
+          else errors.push(file.name + ": không đọc được nội dung");
+        } catch (e) { errors.push(file.name + ": " + e.message); }
+        continue;
+      }
+
+      if (/\.pdf$/i.test(file.name) && provider !== "anthropic") {
+        try { texts.push({ name: file.name + " (text)", kind: "text", mime: "text/plain", content: await this.readPdfText(file) }); }
+        catch (e) { errors.push(file.name + ": " + e.message); }
+        continue;
+      }
+
+      if (this.classifyFile(file) && this.classifyFile(file).type === "image") {
+        try { results.push(await this.processImage(file)); }
+        catch (e) { errors.push(file.name + ": " + e.message); }
         continue;
       }
 
