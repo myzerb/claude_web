@@ -436,25 +436,20 @@ const FileHandler = {
 
   extractReplyFiles(text) {
     const out = [];
-    const re = /```([^\n]*)\n([\s\S]*?)```/g;
-    let last = 0;
-    let m;
-    while ((m = re.exec(String(text || "")))) {
-      const before = text.slice(last, m.index);
-      last = m.index + m[0].length;
-
-      const body = m[2].replace(/\n$/, "");
-      let name = this.nameFromInfo(m[1].trim())
-              || this.nameFromLabel(before)
+    UI.parseBlocks(text).forEach(blk => {
+      if (blk.type !== "code") return;
+      const body = blk.code.replace(/\n$/, "");
+      let name = this.nameFromInfo(blk.info.trim())
+              || this.nameFromLabel(blk.before)
               || this.nameFromFirstLine(body);
-      if (!name) continue;
+      if (!name) return;
 
       name = name.replace(/^\.?\/+/, "");
-      const dup = out.findIndex(f => f.name === name);
-      const meta = { declared: /\b(?:file|filename|title|path)\s*=/i.test(m[1]), lines: body.split("\n").length };
+      const dup = out.findIndex(x => x.name === name);
+      const meta = { declared: /\b(?:file|filename|title|path)\s*=/i.test(blk.info), lines: body.split("\n").length };
       if (dup > -1) out[dup] = Object.assign({ name, content: body }, meta);
       else out.push(Object.assign({ name, content: body }, meta));
-    }
+    });
     return out;
   },
 

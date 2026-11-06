@@ -1,6 +1,6 @@
 const Api = {
   system(ctx) {
-    const hint = "FILE RULE (applies to every reply that contains code): before writing code, estimate how long it will be. If it will be longer than about " + CONFIG.FILE_LINES + " lines, do NOT paste it inline: put ALL of it inside ONE fenced code block whose opening line names the file, for example ```python file=app.py (always write file=<name.ext>). Write no code outside that block and keep the surrounding explanation to a few short sentences. The app turns that block into a downloadable file card. For code of about " + CONFIG.FILE_LINES + " lines or fewer, use a normal fenced block without file=. For several files, use one such block per file.";
+    const hint = "FILE RULE (applies to every reply that contains code): before writing code, estimate how long it will be. If it will be longer than about " + CONFIG.FILE_LINES + " lines, do NOT paste it inline: put ALL of it inside ONE fenced code block whose opening line names the file, for example ```python file=app.py (always write file=<name.ext>). Write no code outside that block and keep the surrounding explanation to a few short sentences. The app turns that block into a downloadable file card. For code of about " + CONFIG.FILE_LINES + " lines or fewer, use a normal fenced block without file=. For several files, use one such block per file. If the file's own text contains lines starting with three backticks, wrap the block in a longer fence (four backticks) so it does not end early.";
     return (ctx.system ? ctx.system + "\n\n" : "") + hint;
   },
 

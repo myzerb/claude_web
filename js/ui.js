@@ -68,18 +68,15 @@ const UI = {
 
     // live = đang stream (khối code chưa đóng); mặc định coi là đã xong
     render(text, live) {
-      const FENCE = "`".repeat(3);
-      const parts = String(text || "").split(FENCE);
-      return parts.map((part, i) => {
-        if (i % 2 === 1) {
-          const nl = part.indexOf("\n");
-          const code = nl > -1 ? part.slice(nl + 1) : part;
-          const lang = nl > -1 ? part.slice(0, nl).trim() : "";
+      return UI.parseBlocks(text).map(blk => {
+        if (blk.type === "code") {
+          const lang = blk.info;
+          const code = blk.code;
           const lg = (lang.split(/\s+/)[0] || "").toLowerCase();
-          const closed = i < parts.length - 1 || !live;
+          const closed = blk.closed || !live;
 
           if (UI.isFileBlock(lang, code)) {
-            return UI.fileCard(lang, lg, code, parts[i - 1] || "", closed);
+            return UI.fileCard(lang, lg, code, blk.before, closed);
           }
 
           const runBtn = (typeof Sandbox !== "undefined" && Sandbox.canRun(lg))
@@ -93,12 +90,60 @@ const UI = {
             "</div>";
         }
 
-        part = part.replace(/^(#{1,4} .+)$/gm, "\n\n$1\n\n");
+        const part = blk.text.replace(/^(#{1,4} .+)$/gm, "\n\n$1\n\n");
         return part.trim()
           ? part.trim().split(/\n{2,}/).map(b => this.block(b)).join("")
           : "";
       }).join("");
     }
+  },
+
+  // Tách text thành các đoạn chữ / khối code theo chuẩn markdown:
+  // hàng rào chỉ tính khi ``` (hoặc ~~~) nằm ĐẦU DÒNG; ``` nằm giữa dòng (trong chuỗi, f-string...) là nội dung code.
+  // Khối code chứa khối markdown lồng nhau (``` ... ```) được đếm độ sâu nên không bị cắt sớm.
+  parseBlocks(text) {
+    const lines = String(text || "").split("\n");
+    const out = [];
+    let tbuf = [], cbuf = null, ch = "", len = 0, info = "", depth = 0;
+
+    const flushText = () => { if (tbuf.length) { out.push({ type: "text", text: tbuf.join("\n") }); tbuf = []; } };
+
+    lines.forEach(line => {
+      if (cbuf === null) {
+        const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+        if (m && !(m[1][0] === "`" && m[2].indexOf("`") > -1)) {
+          flushText();
+          ch = m[1][0]; len = m[1].length; info = m[2].trim(); cbuf = []; depth = 0;
+          return;
+        }
+        tbuf.push(line);
+        return;
+      }
+      const c = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+      if (c && c[1][0] === ch && c[1].length >= len) {
+        if (c[2].trim() === "") {
+          if (depth > 0) { depth--; cbuf.push(line); return; }
+          const prev = out.length && out[out.length - 1].type === "text" ? out[out.length - 1].text : "";
+          out.push({ type: "code", info, code: cbuf.join("\n"), closed: true, before: prev });
+          cbuf = null;
+          return;
+        }
+        if (c[1].length === len) depth++;
+      }
+      cbuf.push(line);
+    });
+
+    if (cbuf !== null) {
+      const prev = out.length && out[out.length - 1].type === "text" ? out[out.length - 1].text : "";
+      out.push({ type: "code", info, code: cbuf.join("\n"), closed: false, before: prev });
+    }
+    flushText();
+
+    // before = chữ liền trước khối code (để đoán tên file từ dòng nhãn)
+    for (let i = 0; i < out.length; i++) {
+      if (out[i].type === "code") out[i].before = i > 0 && out[i - 1].type === "text" ? out[i - 1].text : "";
+    }
+    return out;
   },
 
   // ---------- Code dài -> thẻ file ----------
@@ -115,10 +160,7 @@ const UI = {
   },
 
   hasFileBlock(text) {
-    const re = /```([^\n]*)\n([\s\S]*?)(?:```|$)/g;
-    let m;
-    while ((m = re.exec(String(text || "")))) if (this.isFileBlock(m[1], m[2])) return true;
-    return false;
+    return this.parseBlocks(text).some(b => b.type === "code" && this.isFileBlock(b.info, b.code));
   },
 
   codeName(info, lg, code, before) {
