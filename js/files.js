@@ -502,6 +502,76 @@ const FileHandler = {
     return { file: { name: file.name.replace(/\.(tar\.gz|tgz|tar|gz)$/i, "") + ".merged.txt", kind: "text", mime: "text/plain", content: this.buildMerged(file.name, items, skipped) }, notes };
   },
 
+  // ---------- Blueprint / schematic nhị phân (gzip + NBT của Minecraft) ----------
+  parseNbt(bytes) {
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const dec = new TextDecoder();
+    let p = 0;
+    const MAXARR = 64, MAXLIST = 200;
+    const str = () => { const n = dv.getUint16(p); p += 2; const s = dec.decode(bytes.subarray(p, p + n)); p += n; return s; };
+    const arr = (n, size, read) => {
+      const out = [];
+      for (let i = 0; i < n; i++) { const v = read(p); p += size; if (i < MAXARR) out.push(v); }
+      if (n > MAXARR) out.push("... (" + n + " phần tử, hiển thị " + MAXARR + " đầu)");
+      return out;
+    };
+    const read = t => {
+      switch (t) {
+        case 1: return dv.getInt8(p++);
+        case 2: { const v = dv.getInt16(p); p += 2; return v; }
+        case 3: { const v = dv.getInt32(p); p += 4; return v; }
+        case 4: { const v = dv.getBigInt64(p); p += 8; return Number.isSafeInteger(Number(v)) ? Number(v) : v.toString(); }
+        case 5: { const v = dv.getFloat32(p); p += 4; return Math.round(v * 1e4) / 1e4; }
+        case 6: { const v = dv.getFloat64(p); p += 8; return v; }
+        case 7: { const n = dv.getInt32(p); p += 4; return arr(n, 1, o => dv.getInt8(o)); }
+        case 8: return str();
+        case 9: {
+          const it = dv.getInt8(p++); const n = dv.getInt32(p); p += 4;
+          const out = [];
+          for (let i = 0; i < n; i++) { const v = read(it); if (i < MAXLIST) out.push(v); }
+          if (n > MAXLIST) out.push("... (" + n + " phần tử, hiển thị " + MAXLIST + " đầu)");
+          return out;
+        }
+        case 10: {
+          const o = {};
+          for (;;) { const tt = dv.getInt8(p++); if (tt === 0) break; const k = str(); o[k] = read(tt); }
+          return o;
+        }
+        case 11: { const n = dv.getInt32(p); p += 4; return arr(n, 4, o => dv.getInt32(o)); }
+        case 12: { const n = dv.getInt32(p); p += 4; return arr(n, 8, o => { const v = dv.getBigInt64(o); return Number.isSafeInteger(Number(v)) ? Number(v) : v.toString(); }); }
+        default: throw new Error("tag NBT không hợp lệ (" + t + ")");
+      }
+    };
+    const rootType = dv.getInt8(p++);
+    if (rootType !== 10 && rootType !== 9) throw new Error("không phải NBT");
+    const name = str();
+    return { name, value: read(rootType) };
+  },
+
+  async readBinaryBlueprint(file) {
+    if (file.size > CONFIG.ARCHIVE.maxZipSize) throw new Error("quá " + Math.round(CONFIG.ARCHIVE.maxZipSize / 1048576) + "MB");
+    let bytes = new Uint8Array(await file.arrayBuffer());
+    let gz = false;
+    if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
+      if (typeof DecompressionStream === "undefined") throw new Error("trình duyệt chưa hỗ trợ giải nén (hãy cập nhật)");
+      bytes = await this.inflateRaw(bytes, CONFIG.ARCHIVE.maxUnpacked, "gzip");
+      if (!bytes) throw new Error("giải nén ra quá lớn");
+      gz = true;
+    }
+    // NBT?
+    if (bytes[0] === 10 || bytes[0] === 9) {
+      try {
+        const nbt = this.parseNbt(bytes);
+        let json = JSON.stringify(nbt.value, null, 1);
+        if (json.length > CONFIG.ARCHIVE.maxMergedChars) json = json.slice(0, CONFIG.ARCHIVE.maxMergedChars) + "\n[... cắt bớt ...]";
+        return "[" + file.name + ": " + (gz ? "gzip + " : "") + "NBT" + (nbt.name ? ", root \"" + nbt.name + "\"" : "") + ", chuyển sang JSON để đọc. Mảng dài chỉ hiển thị phần đầu.]\n\n" + json;
+      } catch (e) { /* không phải NBT hợp lệ: thử đọc như chữ */ }
+    }
+    const t = this.decodeUtf8(bytes.subarray(0, CONFIG.MAX_TEXT_BYTES));
+    if (t != null) return t;
+    throw new Error("định dạng nhị phân không nhận ra (không phải NBT hay chữ)");
+  },
+
   // ---------- Kéo thả thư mục ----------
   async collectEntries(entries) {
     const A = CONFIG.ARCHIVE;
@@ -542,6 +612,17 @@ const FileHandler = {
           errors.push(`${file.name}: ${e.message}`);
         }
         continue;
+      }
+
+      if (/\.(blueprint|bp|nbt|schem|schematic|litematic|mcstructure)$/i.test(file.name)) {
+        try {
+          let head = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+          const maybeBinary = (head[0] === 0x1f && head[1] === 0x8b) || head[0] === 10 || head[0] === 9;
+          if (maybeBinary) {
+            texts.push({ name: file.name + " (text)", kind: "text", mime: "text/plain", content: await this.readBinaryBlueprint(file) });
+            continue;
+          }
+        } catch (e) { errors.push(file.name + ": " + e.message); continue; }
       }
 
       if (/\.(tar|tgz|gz)$/i.test(file.name) || /\.tar\.gz$/i.test(file.name)) {
