@@ -451,8 +451,9 @@ const FileHandler = {
 
       name = name.replace(/^\.?\/+/, "");
       const dup = out.findIndex(f => f.name === name);
-      if (dup > -1) out[dup].content = body;
-      else out.push({ name, content: body });
+      const meta = { declared: /\b(?:file|filename|title|path)\s*=/i.test(m[1]), lines: body.split("\n").length };
+      if (dup > -1) out[dup] = Object.assign({ name, content: body }, meta);
+      else out.push(Object.assign({ name, content: body }, meta));
     }
     return out;
   },

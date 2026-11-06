@@ -1,4 +1,6 @@
 const CONFIG = {
+  FILE_LINES: 100, // code dài hơn số dòng này sẽ được đưa vào thẻ file
+
   STORAGE_KEYS: {
     SETTINGS: "tokenchat.settings.v2",
     CHATS: "tokenchat.chats.v2"

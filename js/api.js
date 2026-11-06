@@ -1,4 +1,9 @@
 const Api = {
+  system(ctx) {
+    const hint = "FILE RULE (applies to every reply that contains code): before writing code, estimate how long it will be. If it will be longer than about " + CONFIG.FILE_LINES + " lines, do NOT paste it inline: put ALL of it inside ONE fenced code block whose opening line names the file, for example ```python file=app.py (always write file=<name.ext>). Write no code outside that block and keep the surrounding explanation to a few short sentences. The app turns that block into a downloadable file card. For code of about " + CONFIG.FILE_LINES + " lines or fewer, use a normal fenced block without file=. For several files, use one such block per file.";
+    return (ctx.system ? ctx.system + "\n\n" : "") + hint;
+  },
+
   buildBaseUrl(provider, customBase) {
     const base = provider === "custom"
       ? (customBase || CONFIG.PROVIDERS.custom.base)
@@ -115,7 +120,7 @@ const Api = {
       body.max_tokens = ctx.maxTokens;
     }
 
-    if (ctx.system) body.system = ctx.system;
+    body.system = this.system(ctx);
 
     return fetch(this.buildBaseUrl(ctx.provider, ctx.base) + "/messages", {
       method: "POST",
@@ -147,7 +152,7 @@ const Api = {
 
   streamOpenAI(ctx, h) {
     const messages = [];
-    if (ctx.system) messages.push({ role: "system", content: ctx.system });
+    messages.push({ role: "system", content: this.system(ctx) });
     ctx.messages.forEach(m => messages.push(this.toApiFormat(m, false)));
 
     const body = {

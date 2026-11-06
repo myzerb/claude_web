@@ -243,13 +243,13 @@
   function addReplyFiles(a, m) {
     const files = FileHandler.extractReplyFiles(m.text);
     if (!files.length) return false;
-    if (a.wrap.querySelector(".filecard")) return true;
+    if (a.wrap.querySelector(".filecards")) return true;
 
     const cards = document.createElement("div");
     cards.className = "filecards";
     cards.style.cssText = "display:flex;flex-direction:column;gap:8px;margin-top:10px";
 
-    files.forEach(f => {
+    files.filter(f => !(f.declared || f.lines > CONFIG.FILE_LINES)).forEach(f => {
       const base = f.name.split("/").pop();
       const ext = /\.([A-Za-z0-9]+)$/.exec(base);
       const sub = (ext && !/^\./.test(base) ? ext[1].toUpperCase() : "FILE") + " \u00b7 " + sizeLabel(f.content.length);
@@ -264,12 +264,13 @@
       }));
     }
 
-    a.wrap.insertBefore(cards, a.foot);
+    if (cards.children.length) a.wrap.insertBefore(cards, a.foot);
     return true;
   }
 
   function addFileCard(a, m, chat) {
     if (addReplyFiles(a, m)) return;
+    if (UI.markdown && UI.hasFileBlock(m.text)) return;
     if (!m.text || m.text.length < LONG_REPLY || a.wrap.querySelector(".filecard")) return;
     const name = fileName(chat);
 
@@ -303,6 +304,46 @@
     card.appendChild(meta);
     card.appendChild(btn);
     a.wrap.insertBefore(card, a.foot);
+  }
+
+  // ---------- Copy / xem file code ----------
+  function copyText(text, btn, label) {
+    const done = () => {
+      if (!btn) return;
+      btn.textContent = "Đã chép";
+      setTimeout(() => { btn.textContent = label || "Copy"; }, 1200);
+    };
+    if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => {});
+    else { const t = document.createElement("textarea"); t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); done(); }
+  }
+
+  function openViewer(name, lang, code) {
+    closeViewer();
+    const n = code.split("\n").length;
+    const back = document.createElement("div");
+    back.className = "fv-back";
+    back.innerHTML =
+      '<div class="fv" role="dialog" aria-modal="true" aria-label="' + UI.esc(name) + '">' +
+      '<div class="fv-head"><div class="fv-title"><b>' + UI.esc(name) + "</b><span>" + n + " dòng</span></div>" +
+      '<div class="fv-actions"><button type="button" class="ghost fv-copy">Copy</button>' +
+      '<button type="button" class="primary fv-dl">Tải về</button>' +
+      '<button type="button" class="fv-x" aria-label="Đóng">&times;</button></div></div>' +
+      '<div class="fv-body"><pre class="fv-nums" aria-hidden="true"></pre><pre class="fv-code"><code></code></pre></div></div>';
+    document.body.appendChild(back);
+    let nums = ""; for (let i = 1; i <= n; i++) nums += i + "\n";
+    back.querySelector(".fv-nums").textContent = nums;
+    back.querySelector("code").innerHTML = code.length < 60000 ? UI.hl(code, lang) : UI.esc(code);
+    const copyBtn = back.querySelector(".fv-copy");
+    copyBtn.addEventListener("click", () => copyText(code, copyBtn, "Copy"));
+    back.querySelector(".fv-dl").addEventListener("click", () => downloadBlob(name, new Blob([code], { type: "text/plain;charset=utf-8" })));
+    back.querySelector(".fv-x").addEventListener("click", closeViewer);
+    back.addEventListener("click", e => { if (e.target === back) closeViewer(); });
+    copyBtn.focus();
+  }
+
+  function closeViewer() {
+    const v = document.querySelector(".fv-back");
+    if (v) v.remove();
   }
 
   // ---------- Rendering ----------
@@ -462,7 +503,7 @@
     function paint() {
       raf = 0;
       const stick = UI.isNearBottom();
-      a.body.innerHTML = UI.markdown.render(reply);
+      a.body.innerHTML = UI.markdown.render(reply, true);
       if (a.thinkBody) a.thinkBody.textContent = think;
       if (stick) UI.scrollToBottom();
     }
@@ -671,13 +712,22 @@
     el.thread.addEventListener("click", e => {
       const rb = e.target.closest ? e.target.closest(".coderun") : null;
       if (rb) { Sandbox.open(rb.closest(".codebox")); return; }
+      const card = e.target.closest ? e.target.closest(".codefile:not(.writing)") : null;
+      if (card) {
+        const code = card.querySelector(".fcode").textContent;
+        const name = card.dataset.name;
+        if (e.target.closest(".fcopy")) { copyText(code, e.target.closest(".fcopy"), "Copy"); return; }
+        if (e.target.closest(".fdl")) { downloadBlob(name, new Blob([code], { type: "text/plain;charset=utf-8" })); return; }
+        if (e.target.closest(".meta, .ficon")) { openViewer(name, card.dataset.lang, code); return; }
+      }
       const b = e.target.closest ? e.target.closest(".codecopy") : null;
       if (!b) return;
-      const code = b.closest(".codebox").querySelector("code").textContent;
-      const done = () => { b.textContent = "Đã chép"; setTimeout(() => { b.textContent = "Copy"; }, 1200); };
-      if (navigator.clipboard) navigator.clipboard.writeText(code).then(done, () => {});
-      else { const t = document.createElement("textarea"); t.value = code; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove(); done(); }
+      copyText(b.closest(".codebox").querySelector("code").textContent, b, "Copy");
     });
+    el.thread.addEventListener("keydown", e => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches(".codefile .meta")) { e.preventDefault(); e.target.click(); }
+    });
+    document.addEventListener("keydown", e => { if (e.key === "Escape") closeViewer(); });
 
     el.newChat.addEventListener("click", newChat);
 
@@ -740,7 +790,7 @@
   // ---------- Boot ----------
   function boot() {
     UI.init();
-    try { document.documentElement.dataset.theme = localStorage.getItem("tokenchat.theme") || "dark"; } catch (e) {}
+    try { document.documentElement.dataset.theme = localStorage.getItem("tokenchat.theme") || "light"; } catch (e) {}
 
     ["app", "provider", "base", "baseField", "key", "showKey", "remember", "model",
      "modelPill", "system", "maxTokens", "newChat", "recents", "menuBtn", "chatTitle",

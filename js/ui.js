@@ -66,15 +66,22 @@ const UI = {
       return "<p>" + lines.map(l => this.inline(l)).join("<br>") + "</p>";
     },
 
-    render(text) {
+    // live = đang stream (khối code chưa đóng); mặc định coi là đã xong
+    render(text, live) {
       const FENCE = "`".repeat(3);
-      return String(text || "").split(FENCE).map((part, i) => {
+      const parts = String(text || "").split(FENCE);
+      return parts.map((part, i) => {
         if (i % 2 === 1) {
           const nl = part.indexOf("\n");
           const code = nl > -1 ? part.slice(nl + 1) : part;
           const lang = nl > -1 ? part.slice(0, nl).trim() : "";
-
           const lg = (lang.split(/\s+/)[0] || "").toLowerCase();
+          const closed = i < parts.length - 1 || !live;
+
+          if (UI.isFileBlock(lang, code)) {
+            return UI.fileCard(lang, lg, code, parts[i - 1] || "", closed);
+          }
+
           const runBtn = (typeof Sandbox !== "undefined" && Sandbox.canRun(lg))
             ? '<button type="button" class="coderun">&#9654; Chạy</button>' : "";
           return '<div class="codebox" data-lang="' + UI.esc(lg) + '">' +
@@ -92,6 +99,54 @@ const UI = {
           : "";
       }).join("");
     }
+  },
+
+  // ---------- Code dài -> thẻ file ----------
+  EXT: { python: "py", py: "py", javascript: "js", js: "js", typescript: "ts", ts: "ts", jsx: "jsx", tsx: "tsx",
+         html: "html", htm: "html", css: "css", json: "json", bash: "sh", sh: "sh", shell: "sh", zsh: "sh",
+         java: "java", c: "c", cpp: "cpp", "c++": "cpp", csharp: "cs", cs: "cs", go: "go", rust: "rs", rs: "rs",
+         php: "php", ruby: "rb", rb: "rb", sql: "sql", yaml: "yml", yml: "yml", markdown: "md", md: "md",
+         kotlin: "kt", swift: "swift", lua: "lua", xml: "xml", svg: "svg", toml: "toml", dart: "dart" },
+
+  // AI khai báo file=... (đã tự ước lượng > 100 dòng) hoặc code thực tế dài quá ngưỡng
+  isFileBlock(info, code) {
+    if (/\b(?:file|filename|title|path)\s*=/i.test(info)) return true;
+    return String(code).replace(/\n$/, "").split("\n").length > CONFIG.FILE_LINES;
+  },
+
+  hasFileBlock(text) {
+    const re = /```([^\n]*)\n([\s\S]*?)(?:```|$)/g;
+    let m;
+    while ((m = re.exec(String(text || "")))) if (this.isFileBlock(m[1], m[2])) return true;
+    return false;
+  },
+
+  codeName(info, lg, code, before) {
+    const FH = typeof FileHandler !== "undefined" ? FileHandler : null;
+    let name = FH && (FH.nameFromInfo(info) || FH.nameFromFirstLine(code.replace(/\n$/, "")) || FH.nameFromLabel(before));
+    if (!name) name = "code." + (this.EXT[lg] || "txt");
+    return name.replace(/^\.?\/+/, "");
+  },
+
+  fileCard(info, lg, code, before, closed) {
+    const body = code.replace(/\n$/, "");
+    const lines = body ? body.split("\n").length : 0;
+    const name = this.codeName(info, lg, code, before);
+    const base = name.split("/").pop();
+    const ext = (/\.([A-Za-z0-9]+)$/.exec(base) || [, "FILE"])[1].toUpperCase();
+    const icon = '<div class="ficon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg></div>';
+
+    if (!closed) {
+      return '<div class="filecard codefile writing">' + icon +
+        '<div class="meta"><b title="' + this.esc(name) + '">' + this.esc(name) + "</b>" +
+        "<span>Đang viết… " + lines + ' dòng</span><i class="wprog"></i></div></div>';
+    }
+    const kb = body.length < 1024 ? body.length + " B" : Math.max(1, Math.round(body.length / 1024)) + " KB";
+    return '<div class="filecard codefile" data-name="' + this.esc(base) + '" data-lang="' + this.esc(lg) + '" data-lines="' + lines + '">' + icon +
+      '<div class="meta" role="button" tabindex="0" title="Bấm để xem và copy nội dung"><b>' + this.esc(name) + "</b>" +
+      "<span>" + this.esc(ext) + " · " + lines + " dòng · " + kb + "</span></div>" +
+      '<div class="facts"><button type="button" class="fcopy">Copy</button><button type="button" class="fdl">Tải về</button></div>' +
+      '<pre class="fcode" hidden>' + this.esc(body) + "</pre></div>";
   },
 
   hl(code, lang) {
