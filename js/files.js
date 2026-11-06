@@ -201,6 +201,21 @@ const FileHandler = {
     throw new Error("unsupported compression method " + e.method);
   },
 
+  IMG_EXT: /\.(png|jpe?g|gif|webp|bmp|avif|ico|tiff?|heic|heif|jfif)$/i,
+
+  // Ảnh nằm trong file nén -> đính kèm thành ảnh riêng (tối đa 10 ảnh)
+  async imageFromBytes(path, bytes, images) {
+    if (images.length >= 10) return false;
+    const base = path.split("/").pop();
+    const mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", bmp: "image/bmp", avif: "image/avif", ico: "image/x-icon", tif: "image/tiff", tiff: "image/tiff", heic: "image/heic", heif: "image/heif", jfif: "image/jpeg" }[base.split(".").pop().toLowerCase()] || "";
+    try {
+      const img = await this.processImage(new File([bytes], base, { type: mime }));
+      img.name = path.length < 60 ? path : base;
+      images.push(img);
+      return true;
+    } catch (e) { return false; }
+  },
+
   async processZip(file) {
     const A = CONFIG.ARCHIVE;
     if (file.size > A.maxZipSize) {
@@ -223,6 +238,7 @@ const FileHandler = {
 
     const items = [];
     const skipped = [];
+    const images = [];
     let total = 0;
 
     for (const e of list) {
@@ -231,6 +247,14 @@ const FileHandler = {
       if (segs.some(s => A.ignore.indexOf(s) > -1)) continue;
 
       if (e.flags & 1) { skipped.push(path + " (encrypted)"); continue; }
+      if (this.IMG_EXT.test(path)) {
+        try {
+          const ib = await this.extractEntry(zip, e, 20 * 1024 * 1024);
+          if (ib && await this.imageFromBytes(path, ib, images)) continue;
+        } catch (err) { /* rơi xuống: ghi vào danh sách bỏ qua */ }
+        skipped.push(path + " (image)");
+        continue;
+      }
       if (e.size > A.maxEntryBytes) { skipped.push(path + " (too large)"); continue; }
 
       let bytes;
@@ -256,11 +280,12 @@ const FileHandler = {
       notes.push(`${file.name}: skipped ${skipped.length} file(s): ${shown}`);
     }
     if (!items.length) {
-      notes.push(`${file.name}: no readable text files inside`);
-      return { file: null, notes };
+      if (!images.length) notes.push(`${file.name}: no readable text files inside`);
+      return { file: null, images, notes };
     }
 
     return {
+      images,
       file: {
         name: file.name.replace(/\.zip$/i, "") + ".merged.txt",
         kind: "text",
@@ -476,7 +501,7 @@ const FileHandler = {
     if (!isTar) {
       const t = this.decodeUtf8(bytes.subarray(0, CONFIG.MAX_TEXT_BYTES));
       if (t == null) throw new Error("nội dung giải nén không phải chữ");
-      return { file: { name: file.name.replace(/\.gz$/i, ""), kind: "text", mime: "text/plain", content: t }, notes: [] };
+      return { file: { name: file.name.replace(/\.gz$/i, ""), kind: "text", mime: "text/plain", content: t }, images: [], notes: [] };
     }
     let list = this.parseTar(bytes);
     let strip = 0;
@@ -484,12 +509,16 @@ const FileHandler = {
       const root = list[0].name.replace(/^\.\//, "").split("/")[0];
       if (list.every(e => e.name.replace(/^\.\//, "").split("/")[0] === root)) strip = root.length + 1;
     }
-    const items = [], skipped = [];
+    const items = [], skipped = [], images = [];
     let total = 0;
     for (const e of list) {
       const full = e.name.replace(/^\.\//, "");
       const path = full.slice(strip);
       if (full.toLowerCase().split("/").some(s => A.ignore.indexOf(s) > -1)) continue;
+      if (this.IMG_EXT.test(path)) {
+        if (await this.imageFromBytes(path, e.data, images)) continue;
+        skipped.push(path + " (image)"); continue;
+      }
       if (e.size > A.maxEntryBytes) { skipped.push(path + " (too large)"); continue; }
       const content = this.decodeUtf8(e.data);
       if (content == null) { skipped.push(path + " (binary)"); continue; }
@@ -498,8 +527,8 @@ const FileHandler = {
     }
     const notes = [];
     if (skipped.length) notes.push(`${file.name}: skipped ${skipped.length} file(s): ${skipped.slice(0, 5).join(", ")}${skipped.length > 5 ? ", ..." : ""}`);
-    if (!items.length) { notes.push(`${file.name}: no readable text files inside`); return { file: null, notes }; }
-    return { file: { name: file.name.replace(/\.(tar\.gz|tgz|tar|gz)$/i, "") + ".merged.txt", kind: "text", mime: "text/plain", content: this.buildMerged(file.name, items, skipped) }, notes };
+    if (!items.length) { if (!images.length) notes.push(`${file.name}: no readable text files inside`); return { file: null, images, notes }; }
+    return { images, file: { name: file.name.replace(/\.(tar\.gz|tgz|tar|gz)$/i, "") + ".merged.txt", kind: "text", mime: "text/plain", content: this.buildMerged(file.name, items, skipped) }, notes };
   },
 
   // ---------- Blueprint / schematic nhị phân (gzip + NBT của Minecraft) ----------
@@ -607,11 +636,26 @@ const FileHandler = {
         try {
           const z = await this.processZip(file);
           if (z.file) results.push(z.file);
+          (z.images || []).forEach(i => results.push(i));
           z.notes.forEach(n => errors.push(n));
         } catch (e) {
           errors.push(`${file.name}: ${e.message}`);
         }
         continue;
+      }
+
+      // Zip đổi đuôi (.blueprint của Pterodactyl, .jar, .vsix, .whl, .xpi ...): nhận ra bằng 4 byte đầu "PK\x03\x04"
+      if (!/\.(docx|pptx|xlsx|odt|ods|odp|epub)$/i.test(file.name) && (!this.classifyFile(file) || /\.(blueprint|bp)$/i.test(file.name))) {
+        const h = new Uint8Array(await file.slice(0, 4).arrayBuffer());
+        if (h[0] === 0x50 && h[1] === 0x4b && h[2] === 3 && h[3] === 4) {
+          try {
+            const z = await this.processZip(file);
+            if (z.file) results.push(z.file);
+          (z.images || []).forEach(i => results.push(i));
+            z.notes.forEach(n => errors.push(n));
+          } catch (e) { errors.push(`${file.name}: ${e.message}`); }
+          continue;
+        }
       }
 
       if (/\.(blueprint|bp|nbt|schem|schematic|litematic|mcstructure)$/i.test(file.name)) {
@@ -629,6 +673,7 @@ const FileHandler = {
         try {
           const z = await this.processTarball(file);
           if (z.file) results.push(z.file);
+          (z.images || []).forEach(i => results.push(i));
           z.notes.forEach(n => errors.push(n));
         } catch (e) { errors.push(file.name + ": " + e.message); }
         continue;
